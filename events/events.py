@@ -33,7 +33,7 @@ TIME_MULTIPLIERS = {
 
 events = []
 localized_events = defaultdict(list)
-Event = namedtuple("Event", "dtstart dtend metadata")
+Event = namedtuple("Event", "dtstart dtend metadata rrule")
 
 
 def parse_tstamp(ev, field_name):
@@ -47,7 +47,6 @@ def parse_tstamp(ev, field_name):
         log.error("Unable to parse the '%s' field in the event named '%s': %s" \
             % (field_name, ev['title'], e))
         raise
-
 
 def parse_timedelta(ev):
     """Parse a timedelta string in format [<num><multiplier> ]*
@@ -76,6 +75,18 @@ field in the '%s' event.""" % (c, ev['title']))
 
     return timedelta(**tdargs)
 
+def parse_recursion(ev, field_name):
+    """
+    Parse information about recurring events and return frequency of event and untill time.
+    """
+    chunks = ev[field_name].split()
+    freq = chunks[0].upper()
+    if 'until' in chunks:
+        until = datetime.strptime(chunks[-1], '%Y-%m-%d')
+        rrule = [freq, until] 
+    else:
+        rrule = [freq]
+    return rrule
 
 def parse_article(generator, metadata):
     """Collect articles metadata to be used for building the event calendar
@@ -86,7 +97,7 @@ def parse_article(generator, metadata):
         return
 
     dtstart = parse_tstamp(metadata, 'event-start')
-
+    rrule=[]
     if 'event-end' in metadata:
         dtend = parse_tstamp(metadata, 'event-end')
 
@@ -94,19 +105,23 @@ def parse_article(generator, metadata):
         dtdelta = parse_timedelta(metadata)
         dtend = dtstart + dtdelta
 
+        if 'event-recurring' in metadata:
+            rrule = parse_recursion(metadata, 'event-recurring')
+
     else:
         msg = "Either 'event-end' or 'event-duration' must be" + \
             " speciefied in the event named '%s'" % metadata['title']
         log.error(msg)
         raise ValueError(msg)
 
-    events.append(Event(dtstart, dtend, metadata))
+    events.append(Event(dtstart, dtend, metadata, rrule))
 
 
 def generate_ical_file(generator):
     """Generate an iCalendar file
     """
     global events
+
     ics_fname = generator.settings['PLUGIN_EVENTS']['ics_fname']
     if not ics_fname:
         return
@@ -123,21 +138,32 @@ def generate_ical_file(generator):
 
     DEFAULT_LANG = generator.settings['DEFAULT_LANG']
     curr_events = events if not localized_events else localized_events[DEFAULT_LANG]
-
     for e in curr_events:
+
+        #force convert to ical format here, because otherwise it doesn't happen?
+        from icalendar import vDatetime as vd
+        dtend = vd(e.dtend).to_ical()
+        dtstart = vd(e.dtstart).to_ical()
+        dtstamp = vd (e.metadata['date']).to_ical()
+
         ie = icalendar.Event(
-            summary=e.metadata['summary'],
-            dtstart=e.dtstart,
-            dtend=e.dtend,
-            dtstamp=e.metadata['date'],
+            summary=e.metadata['title'],
+            dtstart=dtstart, 
+            dtend=dtend,
+            dtstamp= dtstamp,
             priority=5,
-            uid=e.metadata['title'] + e.metadata['summary'],
+            uid=e.metadata['title'],
         )
         if 'event-location' in e.metadata:
             ie.add('location', e.metadata['event-location'])
 
-        ical.add_component(ie)
+        if 'event-recurring' in e.metadata:
+            if len(e.rrule)>=2:
+                ie.add('rrule', {'freq':e.rrule[0],'until':e.rrule[1]})
+            else:
+                ie.add('rrule', {'freq':e.rrule[0]})
 
+        ical.add_component(ie)
     with open(ics_fname, 'wb') as f:
         f.write(ical.to_ical())
 
