@@ -40,6 +40,11 @@ Example in ReST format::
     :event-duration: 2h
     :location: somewhere
 
+Specify simple recurrent events (daily, weekly, monthly, yearly) with or without end date::
+
+    :event-start: 2015-01-21 10:30
+    :event-duration: 2h
+    :event-recurring: weekly untill 2017-01-21
 
 To generate an sorted event list in a dedicated page copy the events_list.html
 template under the templates directory in your theme, then create a page:
